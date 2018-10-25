@@ -5,9 +5,12 @@
  * Date:
  */
 
+#include "adafruit-led-backpack.h"
+
 #define RTC_ADDRESS 0x51
 #define SI7021_ADDRESS 0x40
 #define MCP9600_ADDRESS 0x60
+#define DISPLAY_ADDRESS 0x70
 
 // Commands for RTC
 
@@ -29,6 +32,7 @@
 #define I2C_ERROR 0x01
 
 #define ALARM_PIN D7
+#define MOTION_PIN A0
 
 // In ms
 #define INACTIVITY_TIMEOUT 5 * 60 * 1000
@@ -70,6 +74,9 @@ struct Config {
 Config default_config = {300, 900, CELSIUS};
 Config config = default_config;
 
+// 7 segment display
+Adafruit_7segment display = Adafruit_7segment();
+
 // Timers
 Timer sensor_update_timer(UPLOAD_INTERVAL, sensor_update_timer_evt);
 Timer sensor_collect_timer(COLLECT_INTERVAL, sensor_collect_evt);
@@ -83,6 +90,11 @@ uint8_t i2c_setup() {
   // I2C Setup
   Wire.setSpeed(I2C_CLK_SPEED);
   Wire.begin();
+
+  // Setup the display.
+  display.begin(DISPLAY_ADDRESS);
+  display.clear();
+  display.setBrightness(255);
 
   // Test connnection to I2C peripherals
   // if (Wire.requestFrom(RTC_ADDRESS, 1) == 0) {
@@ -358,6 +370,10 @@ void sleep_timer_evt() {
   Serial1.println("sleep");
 
   // TODO: push sleep event and listen for the echo. Then sleep.
+  display.writeDigitRaw(0, 0);
+  display.writeDigitRaw(1, 0);
+  display.writeDigitRaw(2, 0);
+  display.writeDigitRaw(3, 0);
 
   System.sleep(SLEEP_MODE_DEEP, 0);
 };
@@ -420,6 +436,8 @@ int update_units(String unit) {
   return 0;
 }
 
+void motion() { Serial1.println("\r\nmotion"); }
+
 // setup() runs once, when the device is first turned on.
 void setup() {
 
@@ -433,7 +451,7 @@ void setup() {
   // Get EEPROM
   EEPROM.get(CONFIG_EEPROM_ADDR, config);
 
-  if (config.units == 0xffffffff) {
+  if (uint32_t(config.units) == 0xffffffff) {
 
     Serial1.println("empty ee");
 
@@ -450,13 +468,13 @@ void setup() {
   // Spark.subscribe("thermo_temp", sleep_evt_handler, MY_DEVICES);
 
   //  Cloud variables
-  Particle.variable("thermo_lower_bound", config.thermo_lower_bound);
-  Particle.variable("thermo_upper_bound", config.thermo_upper_bound);
+  Particle.variable("t_l_bound", config.thermo_lower_bound);
+  Particle.variable("t_u_bound", config.thermo_upper_bound);
   Particle.variable("units", config.units);
 
-  Particle.function("update_thermo_upper_bound", update_thermo_upper_bound);
-  Particle.function("update_thermo_lower_bound", update_thermo_lower_bound);
-  Particle.function("update_units", update_units);
+  Particle.function("up_t_u_bound", update_thermo_upper_bound);
+  Particle.function("up_t_l_bound", update_thermo_lower_bound);
+  Particle.function("up_units", update_units);
 
   // Set LED to blink green
   // RGB.brightness(63);
@@ -473,6 +491,7 @@ void setup() {
   // Check Motion pin interrupt status
 
   // If motion, set flag to turn on display
+  attachInterrupt(MOTION_PIN, motion, CHANGE);
 
   // If button press, load the config from the server
   // Connect and get temperature ranges from server
@@ -522,11 +541,19 @@ void loop() {
     } else {
       if (!sleep_timer.isActive()) {
         Serial1.println("start sleep_timer");
-        sleep_timer.start();
+        // sleep_timer.start(); //TODO: re-enable
       }
     }
 
     // Update display(s) here.
+    if (config.units == FERINHEIT) {
+      display.print(convert_to_f(thermo_temp), DEC);
+    } else {
+      display.print(thermo_temp, DEC);
+    }
+
+    // Write display
+    display.writeDisplay();
   }
 
   // Update to the cloud
