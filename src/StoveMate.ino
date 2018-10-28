@@ -208,72 +208,27 @@ void pre_setup() {
 STARTUP(pre_setup());
 
 // Syste mode macro
-// SYSTEM_MODE(MANUAL);
+SYSTEM_MODE(MANUAL);
 
 // Function for updating data once connected
 void cloud_event(system_event_t event, int param) {
 
-  Serial1.println("cloud event");
-
-  // if (param == cloud_status_connected) {
-  //   Serial1.println("c.");
-  //
-  //   // bool ok = Particle.publish(
-  //   //     "data",
-  //   //     String::format("{\"ob_temp\":%f,\"ob_hum\":%d,\"thermo:\"%d}",
-  //   //                    onboard_temp / 100.0, onboard_humidity,
-  //   thermo_temp),
-  //   //     PRIVATE, WITH_ACK);
-  //   //
-  //   // if (!ok) {
-  //   //   Serial1.println("Error: data pub");
-  //   // }
-  //   //
-  //
-  //   bool ok = Particle.publish("humidity", String::format("%.2f",
-  //   onboard_temp),
-  //                              PRIVATE, WITH_ACK);
-  //
-  //   if (!ok) {
-  //     Serial1.println("Error: temp pub");
-  //   }
-  //
-  //   ok = Particle.publish("humidity", String::format("%.2f",
-  //   onboard_humidity),
-  //                         PRIVATE, WITH_ACK);
-  //
-  //   if (!ok) {
-  //     Serial1.println("Error: humidity pub");
-  //   }
-  //
-  //   ok = Particle.publish("thermo_temp", String::format("%d", thermo_temp),
-  //                         PRIVATE, WITH_ACK);
-  //
-  //   if (!ok) {
-  //     Serial1.println("Error: therm temp pub");
-  //   }
-  //
-  //   // // Once we get the echo on this go to sleep.
-  //   // ok = Particle.publish("sleep", PRIVATE, WITH_ACK);
-  //   //
-  //   // if (!ok) {
-  //   //   Serial1.println("Error: sleep pub");
-  //   // }
-  //
-  //   Serial1.println(".");
-  // }
+  if (param == cloud_status_connected) {
+    Serial1.println("cloud event");
+    sensor_update = true;
+  }
 }
 
 // Once we get the evt, sleep!
-// void sleep_evt_handler(const char *event, const char *data) {
-//   Serial1.println("sleep");
-//
-//   Particle.disconnect();
-//   WiFi.disconnect();
-//   WiFi.off();
-//
-//   System.sleep(SLEEP_MODE_DEEP, 0);
-// }
+void sleep_evt_handler(const char *event, const char *data) {
+  Serial1.println("sleep");
+
+  Particle.disconnect();
+  WiFi.disconnect();
+  WiFi.off();
+
+  System.sleep(SLEEP_MODE_DEEP, 0);
+}
 
 void make_measurements() {
   // Make measurements
@@ -464,8 +419,11 @@ void setup() {
                    config.thermo_upper_bound, config.thermo_lower_bound);
   }
 
+  // Subscribe to could event
+  System.on(cloud_status, cloud_event);
+
   // Subscribe to sleep event..
-  // Spark.subscribe("thermo_temp", sleep_evt_handler, MY_DEVICES);
+  Spark.subscribe("thermo_temp", sleep_evt_handler, MY_DEVICES);
 
   //  Cloud variables
   Particle.variable("t_l_bound", config.thermo_lower_bound);
@@ -504,20 +462,20 @@ void setup() {
   }
 
   // Start measurement timer
-  sensor_update_timer.start();
-  sensor_collect_timer.start();
+  // sensor_update_timer.start();
+  // sensor_collect_timer.start();
 
   // Trigger sensor collection + update
   sensor_collect = true;
-  sensor_update = true;
+  sensor_update = false;
 
-  // // Turn on Wifi
-  // WiFi.on();
-  // WiFi.connect();
-  //
-  // while (!WiFi.ready()) {
-  //   Serial1.println("nr");
-  // }
+  // Turn on Wifi
+  WiFi.on();
+  WiFi.connect();
+
+  while (!WiFi.ready()) {
+    Serial1.println("nr");
+  }
 
   // Connect to cloud
   Particle.connect();
@@ -535,22 +493,22 @@ void loop() {
     make_measurements();
 
     // If we're above minimum, disable sleep timer
-    if (thermo_temp > config.thermo_lower_bound) {
-      Serial1.println("stop sleep_timer");
-      sleep_timer.stop();
-    } else {
-      if (!sleep_timer.isActive()) {
-        Serial1.println("start sleep_timer");
-        // sleep_timer.start(); //TODO: re-enable
-      }
-    }
+    // if (thermo_temp > config.thermo_lower_bound) {
+    //   Serial1.println("stop sleep_timer");
+    //   sleep_timer.stop();
+    // } else {
+    //   if (!sleep_timer.isActive()) {
+    //     Serial1.println("start sleep_timer");
+    //     // sleep_timer.start(); //TODO: re-enable
+    //   }
+    // }
 
     // Update display(s) here.
-    if (config.units == FERINHEIT) {
-      display.print(convert_to_f(thermo_temp), DEC);
-    } else {
-      display.print(thermo_temp, DEC);
-    }
+    // if (config.units == FERINHEIT) {
+    //   display.print(convert_to_f(thermo_temp), DEC);
+    // } else {
+    //   display.print(thermo_temp, DEC);
+    // }
 
     // Write display
     display.writeDisplay();
@@ -558,16 +516,17 @@ void loop() {
 
   // Update to the cloud
   if (sensor_update) {
-    Serial1.println("upload");
-
     sensor_update = false;
+
+    Serial1.println("upload");
 
     // push updates to cloud
     push_measurements();
-
-    // Determine if alarm is necessary
-    process_alarm();
   }
+
+  // Determine if alarm is necessary
+  // process_alarm();
+  // }
 
   // Connect to cloud and publish
   // if (Particle.connected()) {
@@ -586,7 +545,7 @@ void loop() {
   // System.sleep(SLEEP_MODE_DEEP, 0);
 
   // Process variables
-  // Particle.process();
+  Particle.process();
 
   // Set gpio state here
 
