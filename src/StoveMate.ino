@@ -4,8 +4,8 @@
  * Author:
  * Date:
  */
-
 #include "adafruit-led-backpack.h"
+#include <blynk.h>
 
 #define RTC_ADDRESS 0x51
 #define SI7021_ADDRESS 0x40
@@ -311,6 +311,11 @@ bool push_measurements() {
     return ok;
   }
 
+  // Now write to Blynk
+  Blynk.virtualWrite(V0, String::format("%.2f", onboard_humidity / 100.0));
+  Blynk.virtualWrite(V1, String::format("%.2f", onboard_temp / 100.0));
+  Blynk.virtualWrite(V2, String::format("%.3f", thermo_temp));
+
   return ok;
 }
 
@@ -522,6 +527,9 @@ void setup() {
   // Connect to cloud
   Particle.connect();
 
+  // Begin!
+  Blynk.begin(blynk_auth);
+
   // Set x second sleep cycle via RTC
 }
 
@@ -568,6 +576,8 @@ void loop() {
     // Determine if alarm is necessary
     process_alarm();
   }
+
+  Blynk.run();
 
   // Connect to cloud and publish
   // if (Particle.connected()) {
