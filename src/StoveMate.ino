@@ -39,15 +39,18 @@
 #define LOW_ALARM_INTERVAL 500
 #define COLLECT_INTERVAL 5 * 1000
 #define UPLOAD_INTERVAL 30 * 1000
+#define ALERT_INTERVAL 60 * 1000
 
 // Address locations in EEPROM for config info
 
 #define CONFIG_EEPROM_ADDR 2
 
 // Global state flags
-bool display_enabled = false;
-bool sensor_update = false;
-bool sensor_collect = false;
+bool volatile display_enabled = false;
+bool volatile sensor_update = false;
+bool volatile sensor_collect = false;
+bool volatile silence = false;
+bool volatile alarm_timer_ready = false;
 
 // Global variables
 uint16_t onboard_temp = 0;
@@ -63,15 +66,16 @@ alarm_t alarm = NO_ALARM;
 
 typedef enum { CELSIUS, FERINHEIT } units_t;
 
-int units = CELSIUS;
-
 struct Config {
   int thermo_lower_bound;
   int thermo_upper_bound;
   int units;
 };
 
-Config default_config = {300, 900, CELSIUS};
+// Auth String
+char blynk_auth[] = "3e4a07273fb847d793b5f53453185378";
+
+Config default_config = {150, 250, CELSIUS};
 Config config = default_config;
 
 // 7 segment display
@@ -82,6 +86,17 @@ Timer sensor_update_timer(UPLOAD_INTERVAL, sensor_update_timer_evt);
 Timer sensor_collect_timer(COLLECT_INTERVAL, sensor_collect_evt);
 Timer low_alarm_timer(LOW_ALARM_INTERVAL, low_alarm_evt);
 Timer sleep_timer(INACTIVITY_TIMEOUT, sleep_timer_evt);
+
+// Fires every time V8 is written to
+BLYNK_WRITE(V1) { silence = param.asInt(); }
+
+BLYNK_WRITE(V7) // Button Widget writing to V7 to control units
+{
+  String units = param.asString();
+  update_units(units);
+  sensor_collect = true;
+  sensor_update = true;
+}
 
 // Helper function to convert to F
 float convert_to_f(float tempc) { return tempc * 9 / 5 + 32.0; }
@@ -315,6 +330,19 @@ bool push_measurements() {
   Blynk.virtualWrite(V0, String::format("%.2f", onboard_humidity / 100.0));
   Blynk.virtualWrite(V1, String::format("%.2f", onboard_temp / 100.0));
   Blynk.virtualWrite(V2, String::format("%.3f", thermo_temp));
+  Blynk.virtualWrite(
+      V3, String::format("%.2f", convert_to_f(onboard_temp / 100.0)));
+  Blynk.virtualWrite(V4, String::format("%.3f", convert_to_f(thermo_temp)));
+
+  if (config.units == FERINHEIT) {
+    Blynk.virtualWrite(
+        V5, String::format("%.2f", convert_to_f(onboard_temp / 100.0)));
+    Blynk.virtualWrite(V6, String::format("%.3f", convert_to_f(thermo_temp)));
+  } else {
+    Blynk.virtualWrite(V5, String::format("%.2f", onboard_temp / 100.0));
+    Blynk.virtualWrite(V6, String::format("%.3f", thermo_temp));
+  }
+  Blynk.virtualWrite(V7, String::format("%d", config.units));
 
   return ok;
 }
@@ -322,12 +350,13 @@ bool push_measurements() {
 bool process_alarm() {
 
   alarm_t old_alarm_state = alarm;
+  static int start;
+  bool alarm_timer_ready = false;
 
   if (thermo_temp > config.thermo_upper_bound) {
     Serial1.println("h alarm");
     alarm = HIGH_ALARM;
-  } else if (thermo_temp < config.thermo_lower_bound &&
-             previous_thermo_temp > config.thermo_lower_bound) {
+  } else if (thermo_temp < config.thermo_lower_bound) {
     Serial1.println("l alarm");
     alarm = LOW_ALARM;
     // Reset only if the hysteriisis has been surpassed
@@ -339,16 +368,58 @@ bool process_alarm() {
     alarm = NO_ALARM;
   }
 
-  // Send alarm to cloud
-  if (old_alarm_state != alarm) {
-    bool ok = Particle.publish("alarm", String::format("%d", alarm), PRIVATE,
-                               WITH_ACK);
+  Blynk.syncVirtual(V8);
 
-    if (!ok) {
-      Serial1.println("Error: alarm pub");
-      return ok;
-    }
+  // Reset slience variable.
+  if ((old_alarm_state != NO_ALARM) && (alarm == NO_ALARM)) {
+    Blynk.virtualWrite(V8, 0);
+    silence = false;
   }
+
+  // Get the start time for our rudimentary timer
+  if (start == 0) {
+    start = System.ticks();
+  }
+
+  // Wait the delay before sending message.
+  if (((System.ticks() - start) / System.ticksPerMicrosecond()) >=
+      ALERT_INTERVAL) {
+    alarm_timer_ready = true;
+    start = 0;
+  }
+
+    // Send alarm to cloud
+    if ((alarm != NO_ALARM) && !silence && alarm_timer_ready) {
+
+      // Publish
+      bool ok = Particle.publish("alarm", String::format("%d", alarm), PRIVATE,
+                                 WITH_ACK);
+
+      switch (alarm) {
+      case HIGH_ALARM:
+        if (config.units == FERINHEIT) {
+          Blynk.notify(String::format("Alarm: temp high %.2f°F",
+                                      convert_to_f(thermo_temp)));
+        } else {
+          Blynk.notify(String::format("Alarm: temp high %.2f°C", thermo_temp));
+        }
+
+        break;
+      case LOW_ALARM:
+        if (config.units == FERINHEIT) {
+          Blynk.notify(String::format("Alarm: temp low %.2f°F",
+                                      convert_to_f(thermo_temp)));
+        } else {
+          Blynk.notify(String::format("Alarm: temp low %.2f°C", thermo_temp));
+        }
+        break;
+      }
+
+      if (!ok) {
+        Serial1.println("Error: alarm pub");
+        return ok;
+      }
+    }
 
   // Then set the PWM output accordingly
   // TODO: take over RGB led here
