@@ -1,0 +1,5 @@
+{
+    "C_Cpp.default.configurationProvider": "particle.particle-vscode-core",
+    "C_Cpp.intelliSenseEngineFallback": "Enabled",
+    "particle.targetDevice": "StoveMate"
+}
